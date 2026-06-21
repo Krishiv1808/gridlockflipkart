@@ -11,6 +11,7 @@ import time
 import os
 import json
 import sqlite3
+import random
 from dotenv import load_dotenv
 
 # Load local environment variables from .env file if present
