@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ParkVision AI — Command Center</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Leaflet CSS for Map -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <!-- Custom Style CSS -->
+    <link rel="stylesheet" href="style.css">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- HEADER -->
+        <header class="app-header">
+            <div class="header-left">
+                <div class="logo-glow">🚨</div>
+                <div>
+                    <h1>PARKVISION AI</h1>
+                    <p class="subtitle">On-Street Parking Violation & Congestion Intelligence System</p>
+                </div>
+            </div>
+            <div class="header-right">
+                <div class="user-role-indicator" id="user-role-badge">
+                    <i class="fa-solid fa-user-shield text-red" id="role-icon"></i>
+                    <span id="user-role-text">Admin</span>
+                </div>
+                <button class="btn btn-red btn-small" id="btn-logout" style="padding: 6px 10px; font-size: 0.75rem;">
+                    <i class="fa-solid fa-right-from-bracket"></i> Logout
+                </button>
+                <div class="system-status">
+                    <span class="pulse-dot green"></span>
+                    <span>SYSTEM ONLINE | YOLOv8 ACTIVE</span>
+                </div>
+                <div class="database-status">
+                    <i class="fa-solid fa-database text-blue"></i>
+                    <span>SQLite Connected</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- KPI SUMMARY BAR -->
+        <section class="kpi-bar">
+            <div class="kpi-card">
+                <span class="kpi-title"><i class="fa-solid fa-triangle-exclamation text-red"></i> Violations Logged</span>
+                <span class="kpi-value text-red" id="kpi-violations">8,450</span>
+                <span class="kpi-desc">citywide database records</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-title"><i class="fa-solid fa-gauge-simple-high text-orange"></i> Max Speed Reduction</span>
+                <span class="kpi-value text-orange" id="kpi-speed">-72.5%</span>
+                <span class="kpi-desc">at critical hotspots</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-title"><i class="fa-solid fa-circle-exclamation text-blue"></i> Critical Junctions</span>
+                <span class="kpi-value text-blue" id="kpi-critical">77</span>
+                <span class="kpi-desc">require immediate patrol</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-title"><i class="fa-solid fa-truck-pickup text-green"></i> Active Dispatches</span>
+                <span class="kpi-value text-green" id="kpi-dispatches">0</span>
+                <span class="kpi-desc">wardens & tow trucks out</span>
+            </div>
+        </section>
+
+        <!-- MAIN LAYOUT -->
+        <div class="main-layout">
+            <!-- SIDEBAR NAV -->
+            <nav class="sidebar-nav">
+                <button class="nav-btn active" data-tab="live-tab">
+                    <i class="fa-solid fa-video"></i>
+                    <span>Live CCTV Feed</span>
+                </button>
+                <button class="nav-btn" data-tab="map-tab" id="map-tab-btn">
+                    <i class="fa-solid fa-map-location-dot"></i>
+                    <span>City Congestion Map</span>
+                </button>
+                <button class="nav-btn" data-tab="predict-tab">
+                    <i class="fa-solid fa-brain"></i>
+                    <span>AI Predictive Engine</span>
+                </button>
+                <button class="nav-btn" data-tab="analytics-tab">
+                    <i class="fa-solid fa-chart-pie"></i>
+                    <span>Violation Analytics</span>
+                </button>
+                <button class="nav-btn" data-tab="logs-tab">
+                    <i class="fa-solid fa-list-check"></i>
+                    <span>Command Log & Queue</span>
+                </button>
+                
+                <div class="sidebar-info">
+                    <h4>SYSTEM INFO</h4>
+                    <div class="info-row">
+                        <span>Environment</span>
+                        <strong>Production</strong>
+                    </div>
+                    <div class="info-row">
+                        <span>Database</span>
+                        <strong>SQLite3</strong>
+                    </div>
+                    <div class="info-row">
+                        <span>Map Provider</span>
+                        <strong id="map-provider-text">Leaflet JS Positron</strong>
+                    </div>
+                    <div class="info-row">
+                        <span>Model</span>
+                        <strong>LightGBM</strong>
+                    </div>
+                    <button class="btn btn-blue btn-small btn-full" id="btn-map-settings" style="margin-top: 10px; font-size: 0.7rem; padding: 6px;">
+                        <i class="fa-solid fa-map-location-dot"></i> Config MapmyIndia
+                    </button>
+                </div>
+            </nav>
+
+            <!-- CONTENT WINDOW -->
+            <main class="content-window">
+                
+                <!-- TAB 1: LIVE CCTV FEED -->
+                <div class="tab-content active" id="live-tab">
+                    <div class="grid-2col">
+                        <!-- CCTV Video Display -->
+                        <div class="panel cctv-panel">
+                            <div class="panel-header">
+                                <h3><i class="fa-solid fa-camera"></i> Live CCTV Video Stream</h3>
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <label for="camera-select" style="font-size: 0.75rem; color: var(--text-secondary); font-weight: 600;">Active Feed:</label>
+                                    <select id="camera-select" class="badge cam-badge" style="border: 1px solid var(--border-color); background: rgba(59, 130, 246, 0.1); color: var(--color-blue); font-family: var(--font-main); font-weight: 600; outline: none; cursor: pointer; padding: 2px 8px;">
+                                        <!-- Will be populated dynamically by JS -->
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="cctv-viewport">
+                                <!-- FastAPI CCTV Multipart Stream -->
+                                <img src="" id="cctv-stream-img" alt="CCTV Stream Paused" style="background: #11141b; object-fit: contain;" />
+                                <div class="hud-overlay">
+                                    <div class="hud-top-right">REC ●</div>
+                                </div>
+                            </div>
+                            <div class="cctv-controls">
+                                <button class="btn btn-red" id="btn-pause-cctv"><i class="fa-solid fa-pause"></i> Pause Camera Feed</button>
+                                <button class="btn btn-blue" id="btn-resume-cctv" style="display:none;"><i class="fa-solid fa-play"></i> Resume Camera Feed</button>
+                                <div class="slider-group">
+                                    <label for="viol-threshold">Infraction Timer: <span id="thresh-val">7</span>s</label>
+                                    <input type="range" id="viol-threshold" min="5" max="30" value="7">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Real-time Alerts Panel -->
+                        <div class="panel alerts-panel">
+                            <div class="panel-header">
+                                <h3><i class="fa-solid fa-bell text-red"></i> Real-time Infraction Alerts</h3>
+                                <span class="badge alert-count" id="active-alert-count">0 Active</span>
+                            </div>
+                            <div class="alert-list-container" id="cv-alerts-list">
+                                <!-- Alerts populated by JS -->
+                                <div class="no-alerts">
+                                    <i class="fa-solid fa-circle-check text-green"></i>
+                                    <p>No parking violations currently detected.</p>
+                                    <span class="sub">Vehicles are moving smoothly.</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 2: CITY CONGESTION MAP -->
+                <div class="tab-content" id="map-tab">
+                    <div class="panel map-panel">
+                        <div class="panel-header">
+                            <h3><i class="fa-solid fa-earth-asia"></i> MapMyIndia Localized Traffic Overlay</h3>
+                            <div class="map-controls">
+                                <label><input type="checkbox" id="chk-traffic-layer" checked> Overlay Congested Road Links</label>
+                                <select id="map-filter-priority">
+                                    <option value="ALL">Show All Priorities</option>
+                                    <option value="CRITICAL">Critical Only</option>
+                                    <option value="HIGH">High & Critical</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div id="map-viewport"></div>
+                        <div class="map-legend">
+                            <span class="legend-item"><span class="dot red"></span> Critical Priority (PCIS &ge; 100)</span>
+                            <span class="legend-item"><span class="dot orange"></span> High Priority (40 &le; PCIS &lt; 100)</span>
+                            <span class="legend-item"><span class="dot yellow"></span> Normal Priority (PCIS &lt; 40)</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 3: AI PREDICTIVE ENGINE -->
+                <div class="tab-content" id="predict-tab">
+                    <div class="grid-2col-4-8">
+                        <!-- Controls panel -->
+                        <div class="panel predict-controls-panel">
+                            <div class="panel-header">
+                                <h3><i class="fa-solid fa-sliders"></i> Parameters</h3>
+                            </div>
+                            <form id="prediction-form" class="predict-form">
+                                <div class="form-group">
+                                    <label for="predict-hotspot">Select Target Junction:</label>
+                                    <select id="predict-hotspot" required>
+                                        <!-- Populated by JS -->
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="predict-day">Target Day of Week:</label>
+                                    <select id="predict-day" required>
+                                        <option value="Monday">Monday</option>
+                                        <option value="Tuesday">Tuesday</option>
+                                        <option value="Wednesday">Wednesday</option>
+                                        <option value="Thursday">Thursday</option>
+                                        <option value="Friday">Friday</option>
+                                        <option value="Saturday">Saturday</option>
+                                        <option value="Sunday">Sunday</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="predict-hour">Target Hour of Day: <span id="predict-hour-val">18</span>:00</label>
+                                    <input type="range" id="predict-hour" min="0" max="23" value="18">
+                                </div>
+                                <button type="submit" class="btn btn-blue btn-full"><i class="fa-solid fa-wand-magic-sparkles"></i> Run AI Prediction</button>
+                            </form>
+                            
+                            <div class="predict-meta-info" id="predict-meta">
+                                <!-- Populated dynamically -->
+                            </div>
+                        </div>
+
+                        <!-- Results panel -->
+                        <div class="panel predict-results-panel">
+                            <div class="panel-header">
+                                <h3><i class="fa-solid fa-square-poll-vertical"></i> AI Congestion Forecast</h3>
+                                <span class="badge" id="predict-badge-priority">NORMAL</span>
+                            </div>
+                            
+                            <div class="predict-metrics">
+                                <div class="pred-metric">
+                                    <span class="pred-title">Expected Violations</span>
+                                    <span class="pred-val" id="pred-violations">--</span>
+                                    <span class="pred-unit">concurrent vehicles</span>
+                                </div>
+                                <div class="pred-metric">
+                                    <span class="pred-title">Traffic Velocity Loss</span>
+                                    <span class="pred-val text-orange" id="pred-speed-reduction">--</span>
+                                    <span class="pred-unit">speed decrease %</span>
+                                </div>
+                                <div class="pred-metric">
+                                    <span class="pred-title">Estimated Choke Delay</span>
+                                    <span class="pred-val text-red" id="pred-delay">--</span>
+                                    <span class="pred-unit">minutes of route delay</span>
+                                </div>
+                            </div>
+
+                            <div class="chart-container">
+                                <canvas id="prediction-trend-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 4: VIOLATION ANALYTICS -->
+                <div class="tab-content" id="analytics-tab">
+                    <div class="grid-2col-equal">
+                        <!-- Chart 1: Top Choked areas -->
+                        <div class="panel chart-panel">
+                            <div class="panel-header">
+                                <h3><i class="fa-solid fa-chart-column"></i> Top 10 Most Choked Hotspots</h3>
+                            </div>
+                            <div class="chart-box">
+                                <canvas id="chart-top-hotspots"></canvas>
+                            </div>
+                        </div>
+
+                        <!-- Chart 2: Vehicle Type Distribution -->
+                        <div class="panel chart-panel">
+                            <div class="panel-header">
+                                <h3><i class="fa-solid fa-chart-pie"></i> Vehicle Type Distribution</h3>
+                            </div>
+                            <div class="chart-box">
+                                <canvas id="chart-vehicles"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="panel chart-panel-full margin-top">
+                        <div class="panel-header">
+                            <h3><i class="fa-solid fa-chart-area"></i> Temporal Congestion Intensity Profile (24h)</h3>
+                        </div>
+                        <div class="chart-box-wide">
+                            <canvas id="chart-temporal"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- TAB 5: COMMAND LOG & QUEUE -->
+                <div class="tab-content" id="logs-tab">
+                    <div class="grid-2col-7-5">
+                        <!-- Priority Queue -->
+                        <div class="panel queue-panel">
+                            <div class="panel-header">
+                                <h3><i class="fa-solid fa-list-ol"></i> Prioritized Enforcement Dispatch Queue</h3>
+                            </div>
+                            <div class="table-container">
+                                <table class="enforcement-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Hotspot</th>
+                                            <th>Location</th>
+                                            <th>Police Station</th>
+                                            <th>PCIS Score</th>
+                                            <th>Priority</th>
+                                            <th>Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="enforcement-queue-tbody">
+                                        <!-- Populated by JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Logs & Manual Dispatch -->
+                        <div class="grid-1col">
+                            <div class="panel manual-dispatch-panel">
+                                <div class="panel-header">
+                                    <h3><i class="fa-solid fa-truck-plane"></i> Manual Enforcement Dispatch</h3>
+                                </div>
+                                <form id="manual-dispatch-form" class="dispatch-form">
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="disp-hotspot">Target Hotspot:</label>
+                                            <select id="disp-hotspot" required>
+                                                <!-- Populated by JS -->
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div class="form-row">
+                                        <div class="form-group">
+                                            <label for="disp-unit">Select Unit:</label>
+                                            <select id="disp-unit" required>
+                                                <option value="Tow Truck Alpha">Tow Truck Alpha</option>
+                                                <option value="Tow Truck Beta">Tow Truck Beta</option>
+                                                <option value="Traffic Patrol Team A">Traffic Patrol Team A</option>
+                                                <option value="Traffic Patrol Team B">Traffic Patrol Team B</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <button type="submit" class="btn btn-green btn-full"><i class="fa-solid fa-paper-plane"></i> Dispatch Unit</button>
+                                </form>
+                            </div>
+
+                            <div class="panel logs-panel">
+                                <div class="panel-header">
+                                    <h3><i class="fa-solid fa-clock-rotate-left"></i> System Logs & Dispatch Activity</h3>
+                                    <button class="btn btn-small" id="btn-clear-logs"><i class="fa-solid fa-trash-can"></i> Clear</button>
+                                </div>
+                                <div class="logs-container" id="system-logs-container">
+                                    <!-- Logs populated by JS -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </main>
+        </div>
+    </div>
+
+    <!-- Login Screen Overlay -->
+    <div id="login-overlay" class="login-overlay">
+        <div class="login-box">
+            <h2>🚨 PARKVISION AI</h2>
+            <p class="login-sub">On-Street Parking Violation & Congestion Intelligence System</p>
+            
+            <!-- Login View Container -->
+            <div id="login-view-container">
+                <div class="login-roles">
+                    <div class="role-card" id="role-citizen-card">
+                        <i class="fa-solid fa-user-group"></i>
+                        <h3>Citizen Portal (Quick Access)</h3>
+                        <p>View city congestion hotspots and forecast traffic flow predictions instantly without an account.</p>
+                        <button class="btn btn-blue btn-full" id="btn-login-citizen">Quick Enter</button>
+                    </div>
+                    
+                    <div class="role-card" id="role-admin-card">
+                        <i class="fa-solid fa-user-lock"></i>
+                        <h3>Registered Account Sign In</h3>
+                        <p>Sign in using your registered username and password credentials.</p>
+                        <form id="admin-login-form" style="display:none; width: 100%; margin-top: 10px; flex-direction: column; gap: 8px;">
+                            <div class="form-group" style="text-align: left;">
+                                <input type="text" id="admin-username" placeholder="Username (e.g. admin)" required style="width: 100%;">
+                            </div>
+                            <div class="form-group" style="text-align: left;">
+                                <input type="password" id="admin-password" placeholder="Password (e.g. admin123)" required style="width: 100%;">
+                            </div>
+                            <div id="login-error-msg" style="color: var(--color-red); font-size: 0.75rem; font-weight: 600; text-align: center; margin: 4px 0; display: none;"></div>
+                            <button type="submit" class="btn btn-red btn-full">Sign In</button>
+                        </form>
+                        <button class="btn btn-red btn-full" id="btn-show-admin-login">Sign In Credentials</button>
+                    </div>
+                </div>
+                <div style="text-align: center; margin-bottom: 20px;">
+                    <span class="login-switch-link" id="link-show-register">Don't have an account? Register here</span>
+                </div>
+            </div>
+
+            <!-- Registration View Container -->
+            <div id="register-view-container" style="display:none; max-width: 440px; margin: 0 auto 20px auto; text-align: left;">
+                <h3 style="font-family: var(--font-heading); font-size: 1.3rem; font-weight: 700; margin-bottom: 15px; text-align: center; color: var(--text-primary);">Create User Account</h3>
+                <form id="register-form" style="display: flex; flex-direction: column; gap: 12px;">
+                    <div class="form-group">
+                        <label for="reg-username" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;">Choose Username:</label>
+                        <input type="text" id="reg-username" placeholder="Enter username" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-password" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;">Choose Password:</label>
+                        <input type="password" id="reg-password" placeholder="Enter password" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="reg-role" style="font-size: 0.8rem; color: var(--text-secondary); font-weight: 600;">Assign Role:</label>
+                        <select id="reg-role" required>
+                            <option value="citizen">Citizen (View Congestion & AI Predictions)</option>
+                            <option value="admin">Administrator (Full Enforcement Controls)</option>
+                        </select>
+                    </div>
+                    <div id="register-error-msg" style="color: var(--color-red); font-size: 0.75rem; font-weight: 600; text-align: center; margin: 4px 0; display: none;"></div>
+                    <button type="submit" class="btn btn-blue btn-full" style="margin-top: 10px;">Create Account & Sign In</button>
+                </form>
+                <div style="text-align: center; margin-top: 15px;">
+                    <span class="login-switch-link" id="link-show-login">Already have an account? Sign in here</span>
+                </div>
+            </div>
+            
+            <p class="login-footer">Flipkart Grid 2026 — Smart City Intelligence Command & Control Center</p>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Custom App JS -->
+    <script src="app.js"></script>
+</body>
+</html>

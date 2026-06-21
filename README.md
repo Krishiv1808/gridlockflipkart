@@ -135,3 +135,28 @@ Launch the primary glassmorphic interface (on port `8502`):
 3. **AI Predictive Engine:** Select any of the 150 junctions, set the target day/hour, and run inference to forecast expected velocity loss.
 4. **Analytics / Command Log:** Monitor historical choke points, vehicle class weights, and view past dispatches fetched dynamically.
 # gridlockflipkart
+
+---
+
+## 7. MapmyIndia (Mappls) Premium Integration
+
+The system supports loading premium MapmyIndia (Mappls) map tiles across both dashboards. 
+
+### Option A: Configuration via Frontend UI
+1. Open the primary FastAPI interface at `http://localhost:8502`.
+2. Locate the **"Config MapmyIndia"** button in the bottom-left sidebar under the system info panel.
+3. Click the button and paste your MapmyIndia API Key in the prompt window.
+4. The key is saved to your browser's local storage and the page will reload to display MapmyIndia tiles. To disable, click the button again, clear the input, and click OK.
+
+### Option B: Configuration via Environment Variables
+Set the key in your terminal environment before starting the servers. Both frontends will automatically detect and load MapmyIndia tiles:
+```bash
+# Set environment variable
+export MAPMYINDIA_API_KEY="your_api_key_here"
+
+# Start the primary FastAPI server
+./round2/start_dashboard.sh
+
+# Or start the legacy Streamlit dashboard
+streamlit run round2/app.py
+```
