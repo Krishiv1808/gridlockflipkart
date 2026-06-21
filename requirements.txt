@@ -8,3 +8,4 @@ pydantic
 psycopg2-binary
 python-multipart
 lightgbm
+python-dotenv

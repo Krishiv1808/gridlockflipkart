@@ -10,8 +10,11 @@ import cv2
 import time
 import os
 import json
-import random
 import sqlite3
+from dotenv import load_dotenv
+
+# Load local environment variables from .env file if present
+load_dotenv()
 
 # Try importing psycopg2 for PostgreSQL support (used on Render/cloud)
 try:

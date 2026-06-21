@@ -35,3 +35,6 @@ jan to may*
 
 # Gemini
 .gemini/
+
+# Environment Variables
+.env

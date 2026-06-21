@@ -8,6 +8,10 @@ import time
 import os
 import json
 import random
+from dotenv import load_dotenv
+
+# Load local environment variables from .env file if present
+load_dotenv()
 
 # Try importing plotly; fallback to native streamlit charts if unavailable
 try:
