@@ -73,7 +73,20 @@ class RoadSimulator:
         # Spawn some initial vehicles
         for _ in range(5):
             self.spawn_vehicle(initial=True)
-            
+
+        # Spawn initial parked violations deterministically based on camera_id and time
+        seed_val = sum(ord(c) for c in camera_id)
+        t_sec = int(time.time())
+        import random as local_rand
+        r = local_rand.Random(seed_val + (t_sec // 60))
+
+        num_violations = r.randint(1, 3)
+        for i in range(num_violations):
+            veh_id = seed_val * 10 + i
+            veh_class = r.choice(['car', 'auto-rickshaw', 'motorcycle', 'bus'])
+            duration = r.randint(20, 150) + (t_sec % 20)
+            self.spawn_parked_vehicle(veh_id, veh_class, duration)
+
     def spawn_vehicle(self, initial=False):
         v_id = self.next_id
         self.next_id += 1
@@ -126,7 +139,75 @@ class RoadSimulator:
             'target_y': y,
             'target_x': 0
         }
-        
+
+    def spawn_parked_vehicle(self, v_id, v_class, parked_duration_sec):
+        # Dimensions based on class
+        if v_class == 'car':
+            w, h = 55, 32
+        elif v_class == 'auto-rickshaw':
+            w, h = 42, 30
+        elif v_class == 'motorcycle':
+            w, h = 30, 18
+        elif v_class == 'bus':
+            w, h = 95, 45
+        else: # truck
+            w, h = 85, 40
+
+        # Target parking spot inside the dynamic polygon ROI (avoiding overlaps)
+        import random as local_rand
+        pos_rand = local_rand.Random(v_id)
+
+        tx, ty = 0, 0
+        for _ in range(15):
+            ty = pos_rand.randint(self.y_top + 10, self.y_bottom - 10)
+            weight = (ty - self.y_top) / (self.y_bottom - self.y_top)
+            left_x = int(self.x1 + weight * (self.x4 - self.x1))
+            right_x = int(self.x2 + weight * (self.x3 - self.x2))
+            tx = pos_rand.randint(left_x + 10, right_x - 10)
+            
+            overlap = False
+            for other_v in self.vehicles.values():
+                ocx = other_v['x'] + other_v['w'] / 2
+                ocy = other_v['y'] + other_v['h'] / 2
+                cx = tx + w / 2
+                cy = ty + h / 2
+                if np.sqrt((cx - ocx)**2 + (cy - ocy)**2) < 45.0:
+                    overlap = True
+                    break
+            if not overlap:
+                break
+
+        parked_frames = parked_duration_sec * 12 # assuming 12 FPS
+
+        self.vehicles[v_id] = {
+            'id': v_id,
+            'class': v_class,
+            'x': tx,
+            'y': ty,
+            'w': w,
+            'h': h,
+            'speed': 0,
+            'original_speed': pos_rand.uniform(3.0, 6.0),
+            'lane_idx': 0,
+            'state': 'parked',
+            'parked_frames': parked_frames,
+            'park_duration': parked_frames + pos_rand.randint(300, 600), # Stay parked longer
+            'will_park': True,
+            'target_y': ty,
+            'target_x': tx
+        }
+
+        # Populate active_alerts so it is returned immediately
+        current_time = time.strftime('%H:%M:%S')
+        self.active_alerts[v_id] = {
+            'id': v_id,
+            'class': v_class,
+            'location': f"{self.camera_id} - {self.location_name}",
+            'duration_sec': parked_duration_sec,
+            'timestamp': current_time,
+            'status': 'Active'
+        }
+
     def update(self):
         to_delete = []
         current_time = time.strftime('%H:%M:%S')
@@ -139,19 +220,59 @@ class RoadSimulator:
             is_inside_roi = cv2.pointPolygonTest(self.no_parking_poly, (cx, cy), False) >= 0
             
             if v['state'] == 'driving':
-                # Normal horizontal movement
+                # Collision avoidance look-ahead (keep distance to vehicle in front)
+                lead_vehicle = None
+                min_dist = 9999.0
+                
+                for other_id, other_v in self.vehicles.items():
+                    if other_id == v_id:
+                        continue
+                    
+                    # Bounding box vertical overlap check
+                    y1_v, y2_v = v['y'], v['y'] + v['h']
+                    y1_other, y2_other = other_v['y'], other_v['y'] + other_v['h']
+                    if y1_v < y2_other and y1_other < y2_v:
+                        dist = other_v['x'] - (v['x'] + v['w'])
+                        if 0 <= dist < min_dist:
+                            min_dist = dist
+                            lead_vehicle = other_v
+                
+                if lead_vehicle is not None and min_dist < 60.0:
+                    if min_dist < 15.0:
+                        v['speed'] = 0.0  # Stop to avoid collision
+                    else:
+                        v['speed'] = max(0.0, min(v['original_speed'], lead_vehicle['speed'] - 0.5))
+                else:
+                    if v['speed'] < v['original_speed']:
+                        v['speed'] = min(v['original_speed'], v['speed'] + 0.2)
+                
                 v['x'] += v['speed']
                 
                 # Check if it should start parking
                 if v['will_park'] and v['x'] > 180 and v['x'] < 300:
-                    v['state'] = 'parking'
-                    # Generate a target parking spot inside the dynamic polygon
-                    ty = random.randint(self.y_top + 10, self.y_bottom - 10)
-                    weight = (ty - self.y_top) / (self.y_bottom - self.y_top)
-                    left_x = int(self.x1 + weight * (self.x4 - self.x1))
-                    right_x = int(self.x2 + weight * (self.x3 - self.x2))
-                    tx = random.randint(left_x + 10, right_x - 10)
+                    # Choose a non-overlapping target parking spot
+                    tx, ty = 0, 0
+                    for _ in range(15):
+                        ty = random.randint(self.y_top + 10, self.y_bottom - 10)
+                        weight = (ty - self.y_top) / (self.y_bottom - self.y_top)
+                        left_x = int(self.x1 + weight * (self.x4 - self.x1))
+                        right_x = int(self.x2 + weight * (self.x3 - self.x2))
+                        tx = random.randint(left_x + 10, right_x - 10)
+                        
+                        overlap = False
+                        for other_v in self.vehicles.values():
+                            if other_v['id'] == v_id:
+                                continue
+                            if other_v['state'] in ['parked', 'parking']:
+                                ox = other_v['target_x'] if other_v['state'] == 'parking' else other_v['x']
+                                oy = other_v['target_y'] if other_v['state'] == 'parking' else other_v['y']
+                                if np.sqrt((tx - ox)**2 + (ty - oy)**2) < 45.0:
+                                    overlap = True
+                                    break
+                        if not overlap:
+                            break
                     
+                    v['state'] = 'parking'
                     v['target_x'] = tx
                     v['target_y'] = ty
                     
