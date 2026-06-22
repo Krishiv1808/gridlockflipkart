@@ -140,6 +140,20 @@ st.markdown("""
         border: 1px solid rgba(16, 185, 129, 0.3);
         display: inline-block;
     }
+    
+    /* Responsive card design for Streamlit on mobile */
+    @media (max-width: 768px) {
+        .metric-card {
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        .metric-value {
+            font-size: 1.6rem;
+        }
+        .stButton button {
+            width: 100% !important;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
 

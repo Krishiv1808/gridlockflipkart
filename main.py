@@ -59,9 +59,16 @@ else:
 
 def get_db():
     """Returns a database connection (PostgreSQL or SQLite depending on environment)."""
+    global USE_POSTGRES, PH
     if USE_POSTGRES:
-        conn = psycopg2.connect(DATABASE_URL)
-        return conn
+        try:
+            conn = psycopg2.connect(DATABASE_URL, connect_timeout=3)
+            return conn
+        except Exception as e:
+            print(f"[DB Warning] Failed to connect to PostgreSQL: {e}. Falling back to SQLite.")
+            USE_POSTGRES = False
+            PH = "?"
+            return sqlite3.connect(DB_PATH)
     else:
         return sqlite3.connect(DB_PATH)
 
@@ -481,6 +488,15 @@ def predict_congestion(req: PredictionRequest):
         "predicted_speed_kmh": round(predicted_speed, 1),
         "estimated_delay_mins": round(est_delay, 1),
         "hourly_trends": hourly_trends
+    }
+
+@app.get("/api/db_status")
+def get_db_status():
+    """Returns the current active database connection type."""
+    return {
+        "status": "SUCCESS",
+        "type": "PostgreSQL" if USE_POSTGRES else "SQLite",
+        "detail": "Cloud production database" if USE_POSTGRES else "Local development database"
     }
 
 # Mount Static Files (serves index.html at root '/')

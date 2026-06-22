@@ -299,6 +299,9 @@ document.addEventListener("DOMContentLoaded", () => {
     // 2. INITIALIZE DATA ON LOAD
     async function initApp() {
         try {
+            // Load database connection status
+            fetchDatabaseStatus().catch(console.error);
+
             // Load hotspots first (needed for map markers, dropdowns, and charts)
             await fetchHotspots();
             
@@ -331,6 +334,37 @@ document.addEventListener("DOMContentLoaded", () => {
             }
         } catch (error) {
             console.error("Initialization error:", error);
+        }
+    }
+
+    // Fetch and display active database status
+    async function fetchDatabaseStatus() {
+        try {
+            const res = await fetch(`${API_URL}/api/db_status`);
+            if (res.ok) {
+                const data = await res.json();
+                const dbText = document.getElementById("db-status-text");
+                const dbIcon = document.getElementById("db-status-icon");
+                const dbContainer = document.getElementById("db-status-container");
+                if (dbText && dbIcon) {
+                    dbText.innerText = `${data.type} Connected`;
+                    if (data.type === "PostgreSQL") {
+                        dbIcon.className = "fa-solid fa-cloud text-green";
+                        if (dbContainer) {
+                            dbContainer.style.backgroundColor = "rgba(16, 185, 129, 0.08)";
+                            dbContainer.style.borderColor = "rgba(16, 185, 129, 0.2)";
+                        }
+                    } else {
+                        dbIcon.className = "fa-solid fa-database text-orange";
+                        if (dbContainer) {
+                            dbContainer.style.backgroundColor = "rgba(245, 158, 11, 0.08)";
+                            dbContainer.style.borderColor = "rgba(245, 158, 11, 0.2)";
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            console.error("Error fetching database status:", e);
         }
     }
 

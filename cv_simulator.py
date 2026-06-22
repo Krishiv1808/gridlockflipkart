@@ -70,11 +70,7 @@ class RoadSimulator:
             'truck': (200, 200, 200)        # Gray
         }
         
-        # Spawn some initial vehicles
-        for _ in range(5):
-            self.spawn_vehicle(initial=True)
-
-        # Spawn initial parked violations deterministically based on camera_id and time
+        # Spawn initial parked violations deterministically based on camera_id and time first
         seed_val = sum(ord(c) for c in camera_id)
         t_sec = int(time.time())
         import random as local_rand
@@ -85,7 +81,29 @@ class RoadSimulator:
             veh_id = seed_val * 10 + i
             veh_class = r.choice(['car', 'auto-rickshaw', 'motorcycle', 'bus'])
             duration = r.randint(20, 150) + (t_sec % 20)
-            self.spawn_parked_vehicle(veh_id, veh_class, duration)
+            self.spawn_parked_vehicle(veh_id, veh_class, duration, slot_idx=i, total_slots=num_violations)
+
+        # Spawn some initial driving vehicles after parked violations are placed
+        for _ in range(5):
+            self.spawn_vehicle(initial=True)
+
+    def check_overlap(self, x, y, w, h, exclude_id=None, padding=5, only_front=False):
+        for other_id, other_v in self.vehicles.items():
+            if other_id == exclude_id:
+                continue
+            if only_front and other_v['x'] + other_v['w'] <= x:
+                continue
+            
+            ox = other_v['x']
+            oy = other_v['y']
+            ow = other_v['w']
+            oh = other_v['h']
+            
+            # Check overlap between (x, y, w, h) and (ox, oy, ow, oh) with padding
+            if (x - padding < ox + ow and ox - padding < x + w and
+                y - padding < oy + oh and oy - padding < y + h):
+                return True
+        return False
 
     def spawn_vehicle(self, initial=False):
         v_id = self.next_id
@@ -110,9 +128,43 @@ class RoadSimulator:
         
         # Horizontal position
         if initial:
-            x = random.randint(50, self.width - 100)
+            # Try to find a non-overlapping position
+            found = False
+            for _ in range(100):
+                lane_idx = random.randint(0, len(self.lanes) - 1)
+                y = self.lanes[lane_idx]
+                x = random.randint(50, self.width - 100)
+                if not self.check_overlap(x, y, w, h, padding=15):
+                    found = True
+                    break
+            if not found:
+                # Try with smaller padding
+                for _ in range(100):
+                    lane_idx = random.randint(0, len(self.lanes) - 1)
+                    y = self.lanes[lane_idx]
+                    x = random.randint(50, self.width - 100)
+                    if not self.check_overlap(x, y, w, h, padding=5):
+                        found = True
+                        break
+            if not found:
+                self.next_id -= 1
+                return
         else:
+            # Try to find a lane that is not blocked at the entrance
             x = -w
+            available_lanes = list(range(len(self.lanes)))
+            random.shuffle(available_lanes)
+            found_lane = False
+            for l_idx in available_lanes:
+                y = self.lanes[l_idx]
+                if not self.check_overlap(x, y, w, h, padding=10):
+                    lane_idx = l_idx
+                    found_lane = True
+                    break
+            if not found_lane:
+                # All lanes blocked at entrance, skip spawning this frame
+                self.next_id -= 1
+                return
             
         # Speed (pixels per frame)
         speed = random.uniform(3.0, 6.0)
@@ -140,7 +192,7 @@ class RoadSimulator:
             'target_x': 0
         }
 
-    def spawn_parked_vehicle(self, v_id, v_class, parked_duration_sec):
+    def spawn_parked_vehicle(self, v_id, v_class, parked_duration_sec, slot_idx=0, total_slots=3):
         # Dimensions based on class
         if v_class == 'car':
             w, h = 55, 32
@@ -153,28 +205,45 @@ class RoadSimulator:
         else: # truck
             w, h = 85, 40
 
-        # Target parking spot inside the dynamic polygon ROI (avoiding overlaps)
+        # Target parking spot inside the dynamic polygon ROI
         import random as local_rand
         pos_rand = local_rand.Random(v_id)
 
-        tx, ty = 0, 0
-        for _ in range(15):
-            ty = pos_rand.randint(self.y_top + 10, self.y_bottom - 10)
-            weight = (ty - self.y_top) / (self.y_bottom - self.y_top)
-            left_x = int(self.x1 + weight * (self.x4 - self.x1))
-            right_x = int(self.x2 + weight * (self.x3 - self.x2))
-            tx = pos_rand.randint(left_x + 10, right_x - 10)
-            
-            overlap = False
-            for other_v in self.vehicles.values():
-                ocx = other_v['x'] + other_v['w'] / 2
-                ocy = other_v['y'] + other_v['h'] / 2
-                cx = tx + w / 2
-                cy = ty + h / 2
-                if np.sqrt((cx - ocx)**2 + (cy - ocy)**2) < 45.0:
-                    overlap = True
+        # Deterministic vertical position with a bit of random offset
+        ty = int((self.y_top + self.y_bottom) / 2) + pos_rand.randint(-15, 15)
+        ty = np.clip(ty, self.y_top + 10, self.y_bottom - h - 5)
+        
+        weight = (ty - self.y_top) / (self.y_bottom - self.y_top)
+        left_x = int(self.x1 + weight * (self.x4 - self.x1))
+        right_x = int(self.x2 + weight * (self.x3 - self.x2))
+        
+        width_at_y = right_x - left_x
+        
+        # Use slot_idx to calculate tx
+        fraction = (slot_idx + 0.5) / total_slots
+        tx = int(left_x + fraction * width_at_y - w / 2)
+        tx = np.clip(tx, left_x + 5, right_x - w - 5)
+
+        # Start at the slot center and search nearby if there's any overlap
+        found = False
+        for offset in [0, 10, -10, 20, -20, 30, -30, 40, -40]:
+            for y_offset in [0, 5, -5, 10, -10]:
+                candidate_tx = tx + offset
+                candidate_ty = ty + y_offset
+                candidate_ty = np.clip(candidate_ty, self.y_top + 10, self.y_bottom - h - 5)
+                
+                # Recalculate boundaries for candidate_ty
+                w_weight = (candidate_ty - self.y_top) / (self.y_bottom - self.y_top)
+                c_left_x = int(self.x1 + w_weight * (self.x4 - self.x1))
+                c_right_x = int(self.x2 + w_weight * (self.x3 - self.x2))
+                candidate_tx = np.clip(candidate_tx, c_left_x + 5, c_right_x - w - 5)
+                
+                if not self.check_overlap(candidate_tx, candidate_ty, w, h, padding=5):
+                    tx = candidate_tx
+                    ty = candidate_ty
+                    found = True
                     break
-            if not overlap:
+            if found:
                 break
 
         parked_frames = parked_duration_sec * 12 # assuming 12 FPS
@@ -213,7 +282,7 @@ class RoadSimulator:
         current_time = time.strftime('%H:%M:%S')
         
         # Update vehicle coordinates and state machine
-        for v_id, v in self.vehicles.items():
+        for v_id, v in list(self.vehicles.items()):
             # Check ROI overlap using center of vehicle
             cx = int(v['x'] + v['w'] / 2)
             cy = int(v['y'] + v['h'] / 2)
@@ -232,10 +301,12 @@ class RoadSimulator:
                     y1_v, y2_v = v['y'], v['y'] + v['h']
                     y1_other, y2_other = other_v['y'], other_v['y'] + other_v['h']
                     if y1_v < y2_other and y1_other < y2_v:
-                        dist = other_v['x'] - (v['x'] + v['w'])
-                        if 0 <= dist < min_dist:
-                            min_dist = dist
-                            lead_vehicle = other_v
+                        # Lead vehicle must be in front
+                        if v['x'] < other_v['x'] + other_v['w']:
+                            dist = other_v['x'] - (v['x'] + v['w'])
+                            if dist < min_dist:
+                                min_dist = dist
+                                lead_vehicle = other_v
                 
                 if lead_vehicle is not None and min_dist < 60.0:
                     if min_dist < 15.0:
@@ -246,35 +317,36 @@ class RoadSimulator:
                     if v['speed'] < v['original_speed']:
                         v['speed'] = min(v['original_speed'], v['speed'] + 0.2)
                 
-                v['x'] += v['speed']
+                # Safety check: if the next step would cause overlap with ANY vehicle in front, stop
+                next_x = v['x'] + v['speed']
+                if self.check_overlap(next_x, v['y'], v['w'], v['h'], exclude_id=v_id, padding=5, only_front=True):
+                    v['speed'] = 0.0
+                else:
+                    v['x'] = next_x
                 
                 # Check if it should start parking
                 if v['will_park'] and v['x'] > 180 and v['x'] < 300:
                     # Choose a non-overlapping target parking spot
                     tx, ty = 0, 0
-                    for _ in range(15):
-                        ty = random.randint(self.y_top + 10, self.y_bottom - 10)
+                    found_spot = False
+                    for _ in range(100):
+                        ty = random.randint(self.y_top + 10, self.y_bottom - v['h'] - 5)
                         weight = (ty - self.y_top) / (self.y_bottom - self.y_top)
                         left_x = int(self.x1 + weight * (self.x4 - self.x1))
                         right_x = int(self.x2 + weight * (self.x3 - self.x2))
-                        tx = random.randint(left_x + 10, right_x - 10)
+                        tx = random.randint(left_x + 10, right_x - v['w'] - 10)
                         
-                        overlap = False
-                        for other_v in self.vehicles.values():
-                            if other_v['id'] == v_id:
-                                continue
-                            if other_v['state'] in ['parked', 'parking']:
-                                ox = other_v['target_x'] if other_v['state'] == 'parking' else other_v['x']
-                                oy = other_v['target_y'] if other_v['state'] == 'parking' else other_v['y']
-                                if np.sqrt((tx - ox)**2 + (ty - oy)**2) < 45.0:
-                                    overlap = True
-                                    break
-                        if not overlap:
+                        if not self.check_overlap(tx, ty, v['w'], v['h'], exclude_id=v_id, padding=10):
+                            found_spot = True
                             break
                     
-                    v['state'] = 'parking'
-                    v['target_x'] = tx
-                    v['target_y'] = ty
+                    if found_spot:
+                        v['state'] = 'parking'
+                        v['target_x'] = tx
+                        v['target_y'] = ty
+                    else:
+                        # If no spot is available, abort parking and just continue driving
+                        v['will_park'] = False
                     
             elif v['state'] == 'parking':
                 # Move towards the parking spot inside the ROI
@@ -287,8 +359,16 @@ class RoadSimulator:
                     v['speed'] = 0
                 else:
                     # Move towards target
-                    v['x'] += (dx / dist) * 2.5
-                    v['y'] += (dy / dist) * 1.5
+                    step_x = (dx / dist) * 2.5
+                    step_y = (dy / dist) * 1.5
+                    
+                    next_x = v['x'] + step_x
+                    next_y = v['y'] + step_y
+                    
+                    # Prevent overlap during movement
+                    if not self.check_overlap(next_x, next_y, v['w'], v['h'], exclude_id=v_id, padding=5):
+                        v['x'] = next_x
+                        v['y'] = next_y
                     
             elif v['state'] == 'parked':
                 # Increment stationary counter
@@ -322,20 +402,52 @@ class RoadSimulator:
             elif v['state'] == 'leaving':
                 # Move back to bottom lane and accelerate
                 dy = v['target_y'] - v['y']
-                v['x'] += v['speed']
-                if v['speed'] < v['original_speed']:
-                    v['speed'] += 0.05
-                    
-                if abs(dy) > 2.0:
-                    v['y'] += np.sign(dy) * 1.0
+                
+                # Check for gap in the target lane (bottom lane) before moving vertically
+                target_lane_y = self.lanes[-1]
+                
+                gap_blocked = False
+                for other_id, other_v in self.vehicles.items():
+                    if other_id == v_id:
+                        continue
+                    if abs(other_v['y'] - target_lane_y) < 15.0:
+                        # If other_v is behind us but within 100 pixels, or overlapping
+                        if other_v['x'] < v['x'] + v['w'] + 15 and other_v['x'] > v['x'] - 100:
+                            gap_blocked = True
+                            break
+                            
+                if gap_blocked:
+                    v['speed'] = max(0.0, min(v['speed'], 0.5))
+                    next_x = v['x'] + v['speed']
+                    if not self.check_overlap(next_x, v['y'], v['w'], v['h'], exclude_id=v_id, padding=5, only_front=True):
+                        v['x'] = next_x
+                    else:
+                        v['speed'] = 0.0
                 else:
-                    v['state'] = 'driving'
-                    v['will_park'] = False  # Don't park again
+                    if v['speed'] < v['original_speed']:
+                        v['speed'] += 0.05
                     
-                    # Resolve alert if it was active
-                    if v_id in self.active_alerts:
-                        self.active_alerts[v_id]['status'] = 'Resolved'
-                        del self.active_alerts[v_id]
+                    step_x = v['speed']
+                    step_y = np.sign(dy) * 1.0 if abs(dy) > 2.0 else dy
+                    
+                    next_x = v['x'] + step_x
+                    next_y = v['y'] + step_y
+                    
+                    if not self.check_overlap(next_x, next_y, v['w'], v['h'], exclude_id=v_id, padding=5):
+                        v['x'] = next_x
+                        v['y'] = next_y
+                    else:
+                        v['speed'] = 0.0
+                        
+                    if abs(dy) <= 2.0 and v['speed'] > 0:
+                        v['state'] = 'driving'
+                        v['will_park'] = False  # Don't park again
+                        v['lane_idx'] = len(self.lanes) - 1
+                        
+                        # Resolve alert if it was active
+                        if v_id in self.active_alerts:
+                            self.active_alerts[v_id]['status'] = 'Resolved'
+                            del self.active_alerts[v_id]
             
             # Delete if off screen
             if v['x'] > self.width + 50:
