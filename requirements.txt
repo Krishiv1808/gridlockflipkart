@@ -9,3 +9,6 @@ psycopg2-binary
 python-multipart
 lightgbm
 python-dotenv
+streamlit
+folium
+streamlit-folium
